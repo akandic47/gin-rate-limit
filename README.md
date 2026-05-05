@@ -100,6 +100,54 @@ func main() {
 <br>
 
 
+Response Headers
+
+By default, the package emits the de-facto `X-Rate-Limit-*` headers on every
+response (set by `BeforeResponse`) and on rate-limited responses (set by the
+default `ErrorHandler`):
+
+| Header | Set on | Description |
+|--------|--------|-------------|
+| `X-Rate-Limit-Limit` | every response | Total request limit per window |
+| `X-Rate-Limit-Remaining` | every response | Remaining requests in window |
+| `X-Rate-Limit-Reset` | every response | Unix timestamp when window resets |
+
+If you prefer the standard `Retry-After` header (RFC 9110 §10.2.3) instead,
+opt in by passing both `RFCErrorHandler` and `RFCBeforeResponse`. The two
+go together — using only one would mix conventions on the same response.
+
+```go
+mw := ratelimit.RateLimiter(store, &ratelimit.Options{
+    ErrorHandler:   ratelimit.RFCErrorHandler,
+    BeforeResponse: ratelimit.RFCBeforeResponse,
+})
+```
+
+This emits only `Retry-After: <seconds>` on 429 responses and no rate-limit
+headers on successful responses.
+
+If you want a custom 429 body (for example, JSON to match your API
+conventions) while still using the standard `Retry-After` header, write
+your own `ErrorHandler` and use the public `RetryAfterSeconds` helper:
+
+```go
+func errorHandler(c *gin.Context, info ratelimit.Info) {
+    c.Header("Retry-After", strconv.FormatInt(ratelimit.RetryAfterSeconds(info.ResetTime), 10))
+    c.JSON(429, gin.H{"error": "too many requests"})
+}
+
+mw := ratelimit.RateLimiter(store, &ratelimit.Options{
+    ErrorHandler:   errorHandler,
+    BeforeResponse: ratelimit.RFCBeforeResponse, // suppress X-Rate-Limit-* on success too
+})
+```
+
+`RetryAfterSeconds` returns `ceil(time.Until(resetTime).Seconds())` floored
+at 1, so the client never retries before the window has elapsed.
+
+<br>
+
+
 Custom Store Example
 
 ```go
